@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"io/ioutil"
 	"log"
 	"net"
@@ -14,36 +13,9 @@ import (
 
 func main() {
 	port := openPort()
+	log.Println("Listening on", "http://localhost:"+port)
 	go func() {
-		var handler http.Handler
-		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) == 0 {
-			// Serve the body of stdin
-			body, err := ioutil.ReadAll(os.Stdin)
-			if err != nil {
-				log.Fatalln("Failed to read from stdin:", err)
-			}
-			handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Write(body)
-			})
-		} else {
-			if len(os.Args) < 2 {
-				log.Fatalln("Usage: `share <filepath>`")
-			}
-			arg := os.Args[1]
-			fs, err := fileServer(arg)
-			if err != nil {
-				// Serve the argument as a value
-				handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.Write([]byte(arg))
-				})
-			} else {
-				// Serve the filepath
-				handler = fs
-			}
-		}
-		log.Println("Listening on", "http://localhost:"+port)
-		if err := http.ListenAndServe(":"+port, handler); err != nil {
+		if err := http.ListenAndServe(":"+port, handler()); err != nil {
 			log.Fatalln(err)
 		}
 	}()
@@ -57,25 +29,51 @@ func main() {
 	}
 }
 
+func handler() http.Handler {
+	stat, _ := os.Stdin.Stat()
+	if (stat.Mode() & os.ModeCharDevice) == 0 {
+		return stdinServer()
+	} else {
+		return fileServer()
+	}
+}
+
 func openPort() string {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		log.Fatalln(err)
+		log.Fatalln("Could not obtain an open port:", err)
 	}
 	defer listener.Close()
 	addr := listener.Addr().String()
 	return strings.Split(addr, ":")[1]
 }
 
-func fileServer(path string) (http.Handler, error) {
+func stdinServer() http.Handler {
+	// Serve the body of stdin
+	body, err := ioutil.ReadAll(os.Stdin)
+	if err != nil {
+		log.Fatalln("Failed to read from stdin:", err)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(body)
+	})
+}
+
+func fileServer() http.Handler {
+	if len(os.Args) < 2 {
+		log.Fatalln("Usage: `share <filepath>`")
+	}
+	path := os.Args[1]
 	fi, err := os.Stat(path)
 	if err != nil {
-		return nil, err
+		log.Fatalln("Could not get the file mode:", err)
 	}
 	switch mode := fi.Mode(); {
 	case mode.IsDir():
-		return http.FileServer(http.Dir(path)), nil
+		// Serve a directory
+		return http.FileServer(http.Dir(path))
 	case mode.IsRegular():
+		// Serve a single file
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			filename := filepath.Base(path)
 			switch r.URL.Path {
@@ -86,8 +84,10 @@ func fileServer(path string) (http.Handler, error) {
 			default:
 				http.NotFound(w, r)
 			}
-		}), nil
+		})
 	default:
-		return nil, errors.New("fs: not a file or directory: " + path)
+		log.Fatalln("Not a file or directory:", path)
 	}
+
+	return nil
 }
