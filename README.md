@@ -20,7 +20,7 @@ Share a file:
 $ share foo.txt
 ```
 
-Share all files in a directory:
+Share all files in the current directory:
 
 ```
 $ share .
